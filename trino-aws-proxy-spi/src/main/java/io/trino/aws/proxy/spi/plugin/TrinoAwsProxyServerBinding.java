@@ -13,6 +13,7 @@
  */
 package io.trino.aws.proxy.spi.plugin;
 
+import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
@@ -27,6 +28,7 @@ import io.trino.aws.proxy.spi.plugin.config.PluginIdentifierConfig;
 import io.trino.aws.proxy.spi.plugin.config.S3SecurityFacadeProviderConfig;
 import io.trino.aws.proxy.spi.security.S3SecurityFacadeProvider;
 
+import static com.google.inject.multibindings.Multibinder.newSetBinder;
 import static com.google.inject.multibindings.OptionalBinder.newOptionalBinder;
 import static io.airlift.configuration.ConditionalModule.conditionalModule;
 import static io.airlift.configuration.ConfigurationAwareModule.combine;
@@ -56,6 +58,8 @@ public interface TrinoAwsProxyServerBinding
             log.info("Using %s identity type", type.getSimpleName());
             return type;
         });
+        newSetBinder(binder, com.fasterxml.jackson.databind.Module.class).addBinding()
+                .toInstance(new SimpleModule().addAbstractTypeMapping(Identity.class, type));
     }
 
     static <Implementation> Module optionalPluginModule(
