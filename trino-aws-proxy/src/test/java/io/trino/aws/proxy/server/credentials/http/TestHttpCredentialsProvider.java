@@ -13,9 +13,12 @@
  */
 package io.trino.aws.proxy.server.credentials.http;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
+import io.airlift.http.client.HttpClient;
 import io.airlift.http.server.HttpServerConfig;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.http.server.testing.TestingHttpServer;
@@ -34,6 +37,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 
 import static io.trino.aws.proxy.server.credentials.http.HttpCredentialsModule.HTTP_CREDENTIALS_PROVIDER_IDENTIFIER;
@@ -46,10 +50,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class TestHttpCredentialsProvider
 {
     private final CredentialsProvider credentialsProvider;
+    private final HttpClient httpClient;
+    private final ObjectMapper objectMapper;
 
     public static class Filter
             implements BuilderFilter
     {
+        private static String httpEndpointUri;
+
         @Override
         public TestingTrinoAwsProxyServer.Builder filter(TestingTrinoAwsProxyServer.Builder builder)
         {
@@ -57,6 +65,7 @@ public class TestHttpCredentialsProvider
             try {
                 httpCredentialsServer = createTestingHttpCredentialsServer();
                 httpCredentialsServer.start();
+                httpEndpointUri = httpCredentialsServer.getBaseUrl().toString();
             }
             catch (Exception e) {
                 throw new RuntimeException("Failed to start test http credentials provider server", e);
@@ -65,14 +74,17 @@ public class TestHttpCredentialsProvider
                     .addModule(new HttpCredentialsModule())
                     .addModule(binder -> bindIdentityType(binder, TestingIdentity.class))
                     .withProperty("credentials-provider.type", HTTP_CREDENTIALS_PROVIDER_IDENTIFIER)
-                    .withProperty("credentials-provider.http.endpoint", httpCredentialsServer.getBaseUrl().toString());
+                    .withProperty("credentials-provider.http.endpoint", httpEndpointUri)
+                    .withProperty("credentials-provider.http.headers", "Authorization: auth, Content-Type: application/json");
         }
     }
 
     @Inject
-    public TestHttpCredentialsProvider(CredentialsProvider credentialsProvider)
+    public TestHttpCredentialsProvider(CredentialsProvider credentialsProvider, @ForHttpCredentialsProvider HttpClient httpClient, ObjectMapper objectMapper)
     {
         this.credentialsProvider = requireNonNull(credentialsProvider, "credentialsProvider is null");
+        this.httpClient = requireNonNull(httpClient, "httpClient is null");
+        this.objectMapper = requireNonNull(objectMapper, "objectMapper is null");
     }
 
     @Test
@@ -123,6 +135,14 @@ public class TestHttpCredentialsProvider
         assertThat(actual).isEmpty();
     }
 
+    @Test void testValidCredentialsIncorrectHeader()
+    {
+        HttpCredentialsProviderConfig config = new HttpCredentialsProviderConfig().setEndpoint(Filter.httpEndpointUri).setHttpHeaders(List.of("incorrect-header: incorrect-value"));
+        HttpCredentialsProvider customHttpCredentialsProvider = new HttpCredentialsProvider(httpClient, config, objectMapper, TestingIdentity.class);
+        Optional<Credentials> actual = customHttpCredentialsProvider.credentials("test-emulated-access-key", Optional.of("test-emulated-access-key"));
+        assertThat(actual).isEmpty();
+    }
+
     private static TestingHttpServer createTestingHttpCredentialsServer()
             throws IOException
     {
@@ -139,6 +159,10 @@ public class TestHttpCredentialsProvider
         protected void doGet(HttpServletRequest request, HttpServletResponse response)
                 throws IOException
         {
+            if (Strings.isNullOrEmpty(request.getHeader("Authorization")) || Strings.isNullOrEmpty("Content-Type")) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                return;
+            }
             Optional<String> sessionToken = Optional.ofNullable(request.getParameter("sessionToken"));
             String emulatedAccessKey = request.getPathInfo().substring(1);
             String credentialsIdentifier = "";

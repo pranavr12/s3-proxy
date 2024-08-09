@@ -17,10 +17,15 @@ import io.airlift.configuration.Config;
 import jakarta.validation.constraints.NotNull;
 
 import java.net.URI;
+import java.util.List;
+import java.util.Map;
+
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
 
 public class HttpCredentialsProviderConfig
 {
     private URI endpoint;
+    private Map<String, String> httpHeaders = Map.of();
 
     @NotNull
     public URI getEndpoint()
@@ -32,6 +37,27 @@ public class HttpCredentialsProviderConfig
     public HttpCredentialsProviderConfig setEndpoint(String endpoint)
     {
         this.endpoint = URI.create(endpoint);
+        return this;
+    }
+
+    public Map<String, String> getHttpHeaders()
+    {
+        return httpHeaders;
+    }
+
+    @Config("credentials-provider.http.headers")
+    public HttpCredentialsProviderConfig setHttpHeaders(List<String> httpHeaderList)
+    {
+        try {
+            this.httpHeaders = httpHeaderList.stream()
+                    .map(s -> s.split(":", 2))
+                    .collect(toImmutableMap(
+                            a -> a[0].trim(),
+                            a -> a[1].trim()));
+        }
+        catch (IndexOutOfBoundsException e) {
+            throw new IllegalArgumentException("Invalid HTTP header list: %s" + String.join(",", httpHeaderList));
+        }
         return this;
     }
 }
